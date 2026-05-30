@@ -12,6 +12,9 @@
 @interface SSOConfiguration : NSObject
 @end
 
+@interface YTMFirstTimeSignInViewController : UIViewController
+@end
+
 static NSString *accessGroupID() {
     NSDictionary *query = [NSDictionary dictionaryWithObjectsAndKeys:
                            (__bridge NSString *)kSecClassGenericPassword, (__bridge NSString *)kSecClass,
