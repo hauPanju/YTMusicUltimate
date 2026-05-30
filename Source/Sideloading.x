@@ -9,14 +9,6 @@
 #define YT_BUNDLE_NAME @"YouTubeMusic"
 #define YT_NAME @"YouTube Music"
 
-@interface InitWorkaround : UIViewController
-@property (nonatomic, copy) void (^completion)(void);
-@end
-
-@interface SFAuthenticationViewController : UIViewController
-- (void)remoteViewControllerWillDismiss:(id)remoteVC;
-@end
-
 @interface SSOConfiguration : NSObject
 @end
 
@@ -38,27 +30,6 @@ static NSString *accessGroupID() {
     NSString *accessGroup = [(__bridge NSDictionary *)result objectForKey:(__bridge NSString *)kSecAttrAccessGroup];
     return accessGroup;
 }
-
-// Fix login (2) - Ginsu & AhmedBakfir
-// %hook SSOSafariSignIn
-// - (void)signInWithURL:(id)arg1 presentationAnchor:(id)arg2 completionHandler:(id)arg3 {
-//     NSURL *origURL = arg1;
-//     NSURLComponents *urlComponents = [[NSURLComponents alloc] initWithURL:origURL resolvingAgainstBaseURL:NO];
-//     NSMutableArray *newQueryItems = [urlComponents.queryItems mutableCopy];
-//     for (NSURLQueryItem *queryItem in urlComponents.queryItems) {
-//         if ([queryItem.name isEqualToString:@"system_version"]
-//             || [queryItem.name isEqualToString:@"app_version"]
-//             || [queryItem.name isEqualToString:@"kdlc"]
-//             || [queryItem.name isEqualToString:@"kss"]
-//             || [queryItem.name isEqualToString:@"lib_ver"]
-//             || [queryItem.name isEqualToString:@"device_model"]) {
-//             [newQueryItems removeObject:queryItem];
-//         }
-//     }
-//     urlComponents.queryItems = [newQueryItems copy];
-//     %orig(urlComponents.URL, arg2, arg3);
-// }
-// %end
 
 // Force enable safari sign-in
 %hook SSOConfiguration
@@ -99,7 +70,6 @@ static NSString *accessGroupID() {
 }
 %end
 
-// Thanks to jawshoeadan for this hook.
 %hook SSOKeychainCore
 + (id)accessGroup { return accessGroupID(); }
 + (id)sharedAccessGroup { return accessGroupID(); }
@@ -151,7 +121,7 @@ static NSString *accessGroupID() {
 - (id)appName { return YT_NAME; }
 %end
 
-%hook OGLGM2AccountSelectorViewController 
+%hook OGLGM2AccountSelectorViewController
 - (id)shortAppName { return YT_NAME; }
 %end
 
@@ -207,7 +177,7 @@ static NSString *accessGroupID() {
     return %orig;
 }
 %end
-/*IAmYouTube end */
+/* IAmYouTube end */
 
 %hook ASWUtilities
 - (id)productionBundleIdentifier { return YT_BUNDLE_ID; }
@@ -234,18 +204,7 @@ static NSString *accessGroupID() {
 - (id)currentBundleIdentifier { return YT_BUNDLE_ID; }
 %end
 
-NSDictionary *(*orig_infoDictionary)(id self, SEL _cmd);
-NSDictionary *replaceInfoDict(id self, SEL _cmd) {
-    NSDictionary *originalInfoDictionary = orig_infoDictionary(self, _cmd);
-    NSString *bundleIdentifier = originalInfoDictionary[@"CFBundleIdentifier"];
-    if (![bundleIdentifier isEqualToString:YT_BUNDLE_ID]) {
-        NSMutableDictionary *newInfoDictionary = [NSMutableDictionary dictionaryWithDictionary:originalInfoDictionary];
-        [newInfoDictionary setValue:YT_BUNDLE_ID forKey:@"CFBundleIdentifier"];
-        return newInfoDictionary;
-    }
-    return originalInfoDictionary;
-}
-
+// --- infoDictionary patch ---
 static BOOL patchApplied = NO;
 
 NSDictionary *(*orig_infoDictionary)(id self, SEL _cmd);
@@ -267,17 +226,18 @@ static void applyInfoDictPatch() {
     }
 }
 
+// --- Sign-in screen: inject Fix Sign In button ---
 %hook YTMFirstTimeSignInViewController
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    
-    // Apply patch immediately on appearance — no waiting for button tap
+
+    // Apply the infoDictionary patch immediately on screen appear
     applyInfoDictPatch();
-    
-    // Check if our button is already added
+
+    // Don't add the button twice if view reappears
     if ([self.view viewWithTag:0xBEEF]) return;
-    
+
     UIButton *fixButton = [UIButton buttonWithType:UIButtonTypeSystem];
     fixButton.tag = 0xBEEF;
     fixButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.85];
@@ -287,28 +247,28 @@ static void applyInfoDictPatch() {
     fixButton.layer.cornerRadius = 8;
     fixButton.clipsToBounds = YES;
     fixButton.translatesAutoresizingMaskIntoConstraints = NO;
-    
+
     [self.view addSubview:fixButton];
-    
+
     [NSLayoutConstraint activateConstraints:@[
         [fixButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [fixButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-24],
         [fixButton.widthAnchor constraintEqualToConstant:200],
         [fixButton.heightAnchor constraintEqualToConstant:44]
     ]];
-    
+
     [fixButton addTarget:self action:@selector(ytmu_fixSignInTapped) forControlEvents:UIControlEventTouchUpInside];
 }
 
 %new
 - (void)ytmu_fixSignInTapped {
     applyInfoDictPatch();
-    
-    UIAlertController *alert = [UIAlertController 
+
+    UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Sign In Fix Applied"
-        message:@"The sign-in patch has been applied. Please try signing in now. If it fails, tap the button again and retry."
+        message:@"Patch applied. Please try signing in now. If it still fails, tap the button again and retry."
         preferredStyle:UIAlertControllerStyleAlert];
-    
+
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
