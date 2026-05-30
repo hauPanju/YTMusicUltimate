@@ -246,56 +246,79 @@ NSDictionary *replaceInfoDict(id self, SEL _cmd) {
     return originalInfoDictionary;
 }
 
-BOOL isFirstTime = YES;
+static BOOL patchApplied = NO;
 
-@implementation InitWorkaround
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    isFirstTime = NO;
-    UIActivityIndicatorView *activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-    activityIndicator.color = [UIColor whiteColor];
-    activityIndicator.center = self.view.center;
-    [self.view addSubview:activityIndicator];
-    [activityIndicator startAnimating];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        MSHookMessageEx(objc_getClass("NSBundle"), @selector(infoDictionary), (IMP)replaceInfoDict, (IMP *)&orig_infoDictionary);
-        [self dismissViewControllerAnimated:YES completion:^{
-            if (self.completion) {
-                self.completion();
-            }
-        }];
-    });
+NSDictionary *(*orig_infoDictionary)(id self, SEL _cmd);
+NSDictionary *replaceInfoDict(id self, SEL _cmd) {
+    NSDictionary *originalInfoDictionary = orig_infoDictionary(self, _cmd);
+    NSString *bundleIdentifier = originalInfoDictionary[@"CFBundleIdentifier"];
+    if (![bundleIdentifier isEqualToString:YT_BUNDLE_ID]) {
+        NSMutableDictionary *newInfoDictionary = [NSMutableDictionary dictionaryWithDictionary:originalInfoDictionary];
+        [newInfoDictionary setValue:YT_BUNDLE_ID forKey:@"CFBundleIdentifier"];
+        return newInfoDictionary;
+    }
+    return originalInfoDictionary;
 }
 
-@end
-
-%hook SFAuthenticationViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    if (isFirstTime) {
-        InitWorkaround *workaround = [[InitWorkaround alloc] init];
-        workaround.completion = ^{
-            [self dismissViewControllerAnimated:YES completion:^{
-                if ([self respondsToSelector:@selector(remoteViewControllerWillDismiss:)]) {
-                    [self performSelector:@selector(remoteViewControllerWillDismiss:)];
-                }
-                YTAlertView *alertView = [%c(YTAlertView) infoDialog];
-                alertView.title = LOC(@"WARNING");
-                alertView.subtitle = LOC(@"RETRY_LOGIN");
-                [alertView show];
-            }];
-        };
-        [self presentViewController:workaround animated:YES completion:nil];
+static void applyInfoDictPatch() {
+    if (!patchApplied) {
+        MSHookMessageEx(objc_getClass("NSBundle"), @selector(infoDictionary), (IMP)replaceInfoDict, (IMP *)&orig_infoDictionary);
+        patchApplied = YES;
     }
 }
-%end
 
 %hook YTMFirstTimeSignInViewController
-- (void)viewDidDisappear:(bool)arg1 {
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    
+    // Apply patch immediately on appearance — no waiting for button tap
+    applyInfoDictPatch();
+    
+    // Check if our button is already added
+    if ([self.view viewWithTag:0xBEEF]) return;
+    
+    UIButton *fixButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    fixButton.tag = 0xBEEF;
+    fixButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.85];
+    [fixButton setTitle:@"Fix Sign In" forState:UIControlStateNormal];
+    [fixButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    fixButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    fixButton.layer.cornerRadius = 8;
+    fixButton.clipsToBounds = YES;
+    fixButton.translatesAutoresizingMaskIntoConstraints = NO;
+    
+    [self.view addSubview:fixButton];
+    
+    [NSLayoutConstraint activateConstraints:@[
+        [fixButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [fixButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-24],
+        [fixButton.widthAnchor constraintEqualToConstant:200],
+        [fixButton.heightAnchor constraintEqualToConstant:44]
+    ]];
+    
+    [fixButton addTarget:self action:@selector(ytmu_fixSignInTapped) forControlEvents:UIControlEventTouchUpInside];
+}
+
+%new
+- (void)ytmu_fixSignInTapped {
+    applyInfoDictPatch();
+    
+    UIAlertController *alert = [UIAlertController 
+        alertControllerWithTitle:@"Sign In Fix Applied"
+        message:@"The sign-in patch has been applied. Please try signing in now. If it fails, tap the button again and retry."
+        preferredStyle:UIAlertControllerStyleAlert];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)viewDidDisappear:(BOOL)arg1 {
     %orig;
     YTAlertView *alertView = [%c(YTAlertView) infoDialog];
     alertView.title = LOC(@"WARNING");
     alertView.subtitle = LOC(@"LOGIN_INFO");
     [alertView show];
 }
+
 %end
